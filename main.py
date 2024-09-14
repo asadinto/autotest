@@ -5,7 +5,7 @@ import urllib.parse
 import time
 from selenium import webdriver
 def display_name():
-    
+    #name
     name_art = """
     \033[32m
     █████╗ ███████╗ █████╗ ██████╗ ██╗███╗   ██╗███████╗
