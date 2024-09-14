@@ -177,7 +177,7 @@ def scan_website(url, wordlist=None):
 
 # মেইন ফাংশন
 if __name__ == "__main__":
-    website_url = input("Enter the website URL (e.g., https://lifetoor.com): ")
+    website_url = input("Enter the website URL (e.g., https://google.com): ")
     wordlist_path = input("Enter the path to the wordlist for brute force (leave blank to skip): ")
     
     if wordlist_path:
