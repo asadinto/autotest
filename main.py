@@ -23,6 +23,7 @@ def display_name():
     
     print(name_art)
     print(tool_name)
+    print("Remember that when you start the program then auto open your browser to crawl the urls click any link you want or enter the link which is your target")
 
 display_name()
 
