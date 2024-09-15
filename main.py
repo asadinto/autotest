@@ -196,9 +196,9 @@ def parameter_fuzzing(url, params, fuzz_payloads):
 
 def scan_website(url, sql_payloads, xss_payloads, rce_payloads, fuzz_payloads, wordlist=None):
     domain_name = urllib.parse.urlparse(url).netloc.replace('.', '_')
-    urls_file = f"{domain_name}_all_urls.txt"
-    usernames_file = f"{domain_name}_all_usernames_mail.txt"
-    vulnerabilities_file = f"{domain_name}_vulnerabilities.txt"
+    urls_file = f"report/{domain_name}_all_urls.txt"
+    usernames_file = f"report/{domain_name}_all_usernames_mail.txt"
+    vulnerabilities_file = f"report/{domain_name}_vulnerabilities.txt"
 
     links = find_links(url)
 
@@ -215,13 +215,60 @@ def scan_website(url, sql_payloads, xss_payloads, rce_payloads, fuzz_payloads, w
     with open(vulnerabilities_file, 'w') as file:
         for link in tqdm(links, desc="Scanning Links"):
             print(f"Scanning {link} ...")
-            analyze_headers(link)
+            # Check for vulnerabilities and write results to file
+            response = requests.get(link)
+            soup = BeautifulSoup(response.text, "html.parser")
+
+            # Check headers
+            headers = requests.get(link).headers
+            if 'X-Frame-Options' not in headers:
+                file.write(f"X-Frame-Options header missing on {link}\n")
+            if 'X-Content-Type-Options' not in headers:
+                file.write(f"X-Content-Type-Options header missing on {link}\n")
+            if 'Strict-Transport-Security' not in headers:
+                file.write(f"Strict-Transport-Security header missing on {link}\n")
+
+            # Analyze forms
             form_analysis(link)
-            rce_test(link, rce_payloads)
-            parameter_fuzzing(link, {}, fuzz_payloads)  # You need to modify this based on your needs
+
+            # RCE Test
+            for payload in rce_payloads:
+                response = requests.get(link + payload)
+                if "phpinfo" in response.text or "system" in response.text:
+                    file.write(f"Possible Remote Code Execution vulnerability found with payload: {payload} on URL: {link}\n")
+
+            # SQL Injection Test
+            params = {}  # You need to determine parameters dynamically
+            for payload in sql_payloads:
+                for param in params:
+                    test_params = params.copy()
+                    test_params[param] = payload
+                    response = requests.get(link, params=test_params)
+                    if "SQL" in response.text or "syntax" in response.text:
+                        file.write(f"Possible SQL Injection vulnerability found with payload: {payload} on param: {param} on URL: {link}\n")
+
+            # XSS Test
+            for payload in xss_payloads:
+                for param in params:
+                    test_params = params.copy()
+                    test_params[param] = payload
+                    response = requests.get(link, params=test_params)
+                    if payload in response.text:
+                        file.write(f"Possible XSS vulnerability found with payload: {payload} on param: {param} on URL: {link}\n")
+
+            # Parameter Fuzzing Test
+            for payload in fuzz_payloads:
+                for param in params:
+                    test_params = params.copy()
+                    test_params[param] = payload
+                    response = requests.get(link, params=test_params)
+                    if payload in response.text:
+                        file.write(f"Parameter fuzzing found possible vulnerability with payload: {payload} on param: {param} on URL: {link}\n")
+
             time.sleep(1)
 
     print("Scan completed.")
+
 
 if __name__ == "__main__":
     website_url = input("Enter the website URL (e.g., https://google.com): ")
