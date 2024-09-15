@@ -4,3 +4,4 @@ pip install beautifulsoup4
 pip install selenium
 pip install tqdm
 
+![Screenshot](images/screenshot.png)
